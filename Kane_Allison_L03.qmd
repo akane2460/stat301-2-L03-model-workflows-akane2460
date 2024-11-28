@@ -1,0 +1,385 @@
+---
+title: "L03 Model Workflows & Recipes"
+subtitle: "Data Science 2 with R (STAT 301-2)"
+author: "Allison Kane"
+
+format:
+  html:
+    toc: true
+    embed-resources: true
+    code-fold: show
+    link-external-newwindow: true
+    
+execute:
+  warning: false
+  
+from: markdown+emoji  
+---
+
+::: {.callout-tip icon=false}
+
+## Github Repo Link
+
+[Allison Repo Link](https://github.com/stat301-2-2024-winter/L03-model-workflows-akane2460.git)
+
+:::
+
+## Exercises
+
+We will be specifying and fitting several models to predict home prices using the KC housing dataset (`data\kc_house_data.csv`). The dataset contains 21,613 house sale prices (`price`) and other information for homes sold between May 2014 and May 2015 in King County, WA.
+
+Code from L02 will likely be useful for reference and/or for building upon.
+
+```{r}
+#| label: loading packages
+#| echo: false
+
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(parsnip)
+library(rsample)
+
+tidymodels_prefer()
+
+set.seed(20243012)
+
+kc_train <- read_rds(here("data/kc_train.rds"))
+
+```
+
+
+
+### Exercise 1
+
+Transformations to be done:
+1. From L02 we know that we will want to perform a $log_{10}$ transformation of our outcome variable.
+2. We will want to re-type several variables as factors: `waterfront` (nominal/un-ordered), `view` (ordered), `condition` (ordered), and `grade` (ordered).
+
+Perform an initial split of the dataset into testing and training sets using the `rsample` package. Use the default number of strata. 
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 01
+#| eval: false
+
+kc_data <- read.csv(here("data/kc_house_data.csv")) |> 
+  janitor::clean_names() 
+
+kc_transformed <- kc_data |> 
+  mutate(price_log10 = log10(price)) |> 
+  select(-price)
+
+# factor tranformations
+kc_transformed <- kc_transformed |> 
+  mutate(
+    waterfront = factor(waterfront),
+    view = factor(view),
+    condition = factor(condition),
+    grade = factor(grade)
+  )
+
+# initial split
+kc_split <- kc_transformed |> 
+  initial_split(prop = .8, strata = price_log10)
+
+kc_train <- kc_split |> training()
+kc_test <- kc_split |>  testing()
+
+write_rds(kc_split, file = here("data/kc_split.rds"))
+write_rds(kc_train, file = here("data/kc_train.rds"))
+write_rds(kc_test, file = here("data/kc_test.rds"))
+```
+
+:::
+
+What is the default number of strata used? 
+
+::: {.callout-tip icon="false"}
+## Solution
+
+The number of breaks strata uses by default is 4. This can be altered only by explicitly stating the number of breaks to be used.
+
+:::
+
+### Exercise 2
+
+Define 4 model types:
+
+- Ordinary linear regression
+- Regularized/penalized linear regression (elastic net `glmnet`) with `mixture = 1`, which is called lasso regression, with `penalty = 0.01`.
+- Regularized/penalized linear regression (elastic net `glmnet`) with `mixture = 0` which is called ridge regression, with `penalty = 0.01`.
+- Random forest model using `ranger` with `trees = 500` and `min_n = 5`
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 02
+#| eval: false
+
+lm_spec <-linear_reg() |> 
+  set_engine("lm") |> 
+  set_mode("regression")
+
+# ridge
+ridge_spec <-linear_reg(penalty = 0.01, mixture = 0) |> 
+  set_engine("glmnet") |> 
+  set_mode("regression")
+
+# lasso
+lasso_spec <-linear_reg(penalty = 0.01, mixture = 0) |> 
+  set_engine("glmnet") |> 
+  set_mode("regression")
+
+# rf
+rf_spec <- rand_forest(trees = 500, min_n = 5) |> 
+  set_engine("ranger") |> 
+  set_mode("regression")
+
+```
+
+The models are defined. 
+
+:::
+
+### Exercise 3
+
+Define our recipe and set up our workflow. This will allow us to fit our model to our training data and predict on our testing data.
+
+#### Task 1
+
+Define a recipe that uses `waterfront`, `sqft_living`, `yr_built`, and `bedrooms` to predict the target/outcome variable. Add a `step_dummy()` to handle your factor variables.
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 03 task 1
+#| eval: false
+
+kc_recipe <- recipe(
+  price_log10 ~ waterfront + sqft_living + yr_built + bedrooms,
+  data = kc_train) |> 
+  step_dummy(waterfront)
+
+```
+
+:::
+
+#### Task 2
+
+Create a workflow that adds the model specifications and the recipe. There should be 4 workflows, one for each model type. 
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 03 task 2
+#| eval: false
+
+lm_wflow <-
+  workflow() |> 
+  add_model(lm_spec) |> 
+  add_recipe(kc_recipe)
+
+ridge_wflow <-
+  workflow() |> 
+  add_model(ridge_spec) |> 
+  add_recipe(kc_recipe)
+
+lasso_wflow <-
+  workflow() |> 
+  add_model(lasso_spec) |> 
+  add_recipe(kc_recipe)
+
+rf_wflow <-
+  workflow() |> 
+  add_model(rf_spec) |> 
+  add_recipe(kc_recipe)
+
+```
+
+:::
+
+#### Task 3
+
+Train each workflow by fitting the workflow object to the training data. Compare each of the fitted models (except the random forest model) using `broom::tidy()`. Output is not enough, you should write a few sentences.
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 03 task 3
+#| echo: false
+
+read_rds(here("results/tidy_fit_lm.rds")) |> 
+  head()
+
+read_rds(here("results/tidy_fit_ridge.rds")) |> 
+  head()
+
+read_rds(here("results/tidy_fit_lasso.rds")) |> 
+  head()
+
+```
+
+  In OLS, the p-values for `waterfront`, `sqft_living`, `yr_built` and `bedrooms` are all less .05 (standard level of significance). This indicates that each of these variables significantly contribute to the sale `price` of a house. The variables `waterfront_X1` and `sqft_living` are both have a positive relationship with house `price`, but `waterfront_X1` has a much stronger relationship (due to its estimate of .242 vs. sqft_living estimate of .000195). `yr_built` and `bedrooms` both have a weak negative relationship with house `price`. 
+  In lasso, it is clear that `sqft_living` and `waterfront` both have positive relationships with house sale `price`, with a stronger relationship seen in `waterfront`. A similar trend is seen in ridge. 
+  In ridge, there seems to be a weak negative relationship between `yr_built` and `bedrooms` with sale `price` (and the same can be said for yr_built in lasso). In lasso, `bedrooms` however has an estimated no relationship with a home's sale `price` (coefficient estimated to be zero). 
+
+:::
+
+#### Task 4
+
+Evaluate which of the 4 workflows is best by using `predict()` and calculating the RMSE.
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 03 task 4
+#| echo: false
+
+read_rds(here("results/rsme_lm.rds")) |> 
+  head()
+
+read_rds(here("results/rsme_ridge.rds")) |> 
+  head()
+
+read_rds(here("results/rsme_lasso.rds")) |> 
+  head()
+
+read_rds(here("results/rsme_rf.rds")) |> 
+  head()
+
+read_rds(here("results/rsme_diffs.rds"))
+```
+
+When investigating the outputs, it seems genreally that the random forest workflow is the best based onthe RSME. Additionally, when looking at the typical (mean) difference between the predicted and actual test values, random forest workflow has the best predictions. 
+
+:::
+
+### Exercise 4
+
+The `tidymodels` workflow makes it easy to fit your data to a new recipe or modify an existing recipe. 
+
+You only need to complete this Exercise with **ONE** model type (ols, lasso, ridge, or random forest). This time we will be using `waterfront`, `sqft_living`, `sqft_lot`, `bedrooms`, `lat`, and `date` as our predictors.
+
+#### Task 1
+
+First we will pre-process the data by visualizing relationships to determine if a transformation is necessary. 
+
+- Visualize the relationship of the outcome variable with `sqft_lot` and `lat`. 
+- What could an appropriate transformation be for those variables?
+
+::: {.callout-tip icon="false"}
+## Solution
+![Sqft_lot visualization](results/sqft_lot_vis.png)
+
+![Lat visualization](results/lat_vis.png)
+
+It seems that sqft_lot does not have an appropriate scale. Transforming it to log_10 scale would be appropriate. Lat seemed to have some alternative scale or formula (definitely not linear), therefore transforming it in the splines package could be helpful. 
+
+:::
+
+#### Task 2
+
+Define a recipe that uses `waterfront`, `sqft_living`, `sqft_lot`, `bedrooms`, `lat`, and `date` to predict the target/outcome variable. 
+
+- Add a step to transform dummy variables
+- Add a step that does an appropriate transformation on `lat`
+- Add a step that does an appropriate transformation on `sqft_lot`
+- Add a step that extracts the `"month"` feature from `date`; we only want to use the month feature from `date` for prediction and nothing else 
+
+Check that the recipe is working as expected by applying it to the training data. Explain how we know the recipe is working as expected. 
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 04 task 2 recipe
+#| results: false
+
+kc_recipe_adjusted <- recipe(
+  price_log10 ~ waterfront + sqft_living + sqft_lot + lat + bedrooms + date,
+  data = kc_train) |> 
+  step_log(sqft_lot) |> 
+  step_ns(lat, deg_free = 5) |> 
+  step_date(date, features = "month") |> 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) |> 
+  update_role(date, new_role = "id")
+
+```
+
+```{r}
+#| label: ex 04 task 2 check
+
+# check recipe
+kc_recipe_adjusted |>
+  prep() |>
+  bake(new_data = NULL) |> 
+  slice(10)
+
+```
+
+
+We know that the recipe is working, as we see in the output that lat has been appropriately adjusted with the ns() function (with 5 columns corresonding to the 5 degrees of freedom given). The sqft_lot is appropriately adjusted with a log10 scale. The waterfront variable is included in the step_dummy (it included all nominal variables), with columns appropriately indicating *1* or *0*. The date adjustment, as well, shows columns for each month, corresponding to the month in which the house was purchased (aligned with the `date` column). 
+
+:::
+
+#### Task 3
+
+Define and fit a new workflow using your choice of model specification (1 of the 4 previous defined) and the new recipe from Task 2.
+
+Evaluate the new workflow by using `predict()` and calculating the RMSE. How does the new workflow's RMSE compare to RMSEs for the previous workflows? Did the new recipe make a difference?
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 04 task 3
+#| echo: false
+
+rsme_lm_adjusted <- read_rds(here("results/rsme_lm_adjusted.rds")) 
+
+rsme_lm_adjusted |> 
+  head()
+
+rsme_lm_adjusted |> 
+  summarise(
+    mean_difference = mean(difference)
+  )
+
+```
+Generally, it seems that this adjusted model isn't better at predicting, based on the typical differences in predicted and actual outcomes of the home sale prices.
+
+:::
+
+#### Task 4
+
+What proportion or percentage of the predicted prices are within 25% of the original price on the testing set? Is this value surprising or not surprising to you? Explain.
+
+::: {.callout-tip icon="false"}
+## Solution
+
+```{r}
+#| label: ex 04 task 04
+
+rsme_lm_adjusted |> 
+  mutate(upper_bound = 1.25 * .pred,
+         lower_bound = .75 * .pred, 
+         within = if_else(
+           price_log10 >= lower_bound|price_log10 >= lower_bound,
+           TRUE,
+           FALSE)) |> 
+  filter(within == FALSE)
+```
+
+
+It seems that 100% of the predicted prices are within 25% of the original price on the testing set. This is somewhat surprising, but given that they typical differences in predicted and actual prices were quite low, it seems that this could make sense. 
+
+:::
+
